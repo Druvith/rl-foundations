@@ -34,7 +34,7 @@ def compute_gae(rewards, values, gamma=0.99, lam=0.95):
         advantages[t] = last_adv = delta + gamma * lam * last_adv
     return advantages
 
-def reward_to_go(rewards, gamma=0.99):
+def reward_to_go(rewards, gamma=0.99, last_val=0):
     """
     Compute rewards-to-go for each timestep in a trajectory.
     
@@ -46,7 +46,7 @@ def reward_to_go(rewards, gamma=0.99):
         np.ndarray: Rewards-to-go for each timestep.
     """
     rtg = np.zeros_like(rewards, dtype=np.float32)
-    running_sum = 0
+    running_sum = last_val
     for t in reversed(range(len(rewards))):
         running_sum = rewards[t] + gamma * running_sum
         rtg[t] = running_sum

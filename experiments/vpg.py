@@ -12,6 +12,7 @@ import gymnasium as gym
 import time
 from src.core import compute_gae, reward_to_go, MLPActorCritic
 import wandb
+from collections import deque
 
 class VPGBuffer:
     """
@@ -67,7 +68,7 @@ class VPGBuffer:
         self.adv_buf[path_slice] = adv
 
         # reward-to-go calculation
-        self.ret_buf[path_slice] = reward_to_go(rews[:-1], self.gamma)
+        self.ret_buf[path_slice] = reward_to_go(self.rew_buf[path_slice], self.gamma, last_val)
         self.path_start_idx = self.ptr
 
 
@@ -87,7 +88,7 @@ class VPGBuffer:
         return {k: torch.as_tensor(v, dtype=torch.float32) for k,v in data.items()}
     
 def vpg(env_fn, actor_critic=MLPActorCritic, ac_kwargs=dict(), seed=10,
-        steps_per_epoch=4000, epochs=50, gamma=0.99, pi_lr=3e-4,
+        steps_per_epoch=4000, epochs=100, gamma=0.99, pi_lr=3e-4,
         vf_lr=1e-3, train_v_iters=100, lam=0.97, max_ep_len=1000,
         save_freq=10):
     
@@ -163,6 +164,7 @@ def vpg(env_fn, actor_critic=MLPActorCritic, ac_kwargs=dict(), seed=10,
     start_time = time.time()
     o, _ = env.reset()
     ep_ret, ep_len = 0, 0
+    ep_ret_100_deque = deque(maxlen=100)
 
     # Collect the experience in each env and perform updates
     for epoch in range(epochs):
@@ -189,14 +191,15 @@ def vpg(env_fn, actor_critic=MLPActorCritic, ac_kwargs=dict(), seed=10,
                 if epoch_ended and not(terminal):
                     print('Warning: trajectory cut off by epoch at %d steps.'%ep_len, flush=True)
                 # If trajectory didn't reach the terminal state, then bootstrap the value target
-                if timeout or epoch_ended:
+                v = 0
+                if not terminated:
+                    # Bootstrap the value estimate if the episode was cut short.
                     _, v, _ = ac.step(torch.as_tensor(o, dtype=torch.float32))
-                else:
-                    v = 0
                 buf.finish_path(v)
                 if terminal:
                     epoch_ep_rets.append(ep_ret)
                     epoch_ep_lens.append(ep_len)
+                    ep_ret_100_deque.append(ep_ret)
                 o, _ = env.reset()
                 ep_ret, ep_len = 0, 0
 
@@ -215,6 +218,7 @@ def vpg(env_fn, actor_critic=MLPActorCritic, ac_kwargs=dict(), seed=10,
             'loss_v': loss_v,
             'ep_ret_mean': np.mean(epoch_ep_rets) if epoch_ep_rets else 0,
             'ep_len_mean': np.mean(epoch_ep_lens) if epoch_ep_lens else 0,
+            'ep_ret_100_mean': np.mean(ep_ret_100_deque) if ep_ret_100_deque else 0,
             'ep_ret_std': np.std(epoch_ep_rets) if epoch_ep_lens else 0,
             'ep_len_std': np.std(epoch_ep_lens) if epoch_ep_lens else 0,
             'ep_ret_max': np.max(epoch_ep_rets) if epoch_ep_lens else 0,
@@ -236,7 +240,7 @@ if __name__ == '__main__':
     parser.add_argument('--gamma', type=float, default=0.99)
     parser.add_argument('--seed', '-s', type=int, default=0)
     parser.add_argument('--steps', type=int, default=4000)
-    parser.add_argument('--epochs', type=int, default=50)
+    parser.add_argument('--epochs', type=int, default=100)
     args = parser.parse_args()
 
     vpg(lambda : gym.make(args.env), actor_critic=MLPActorCritic,
