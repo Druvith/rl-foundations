@@ -5,6 +5,12 @@ from torch.distributions.categorical import Categorical
 from torch.distributions.normal import Normal
 import gymnasium as gym
 from gymnasium.spaces import Box, Discrete
+from collections import deque
+import random
+import psutil
+import sys
+import os
+
 
 def mlp(sizes, activation, output_activation=nn.Identity):
     layers = []
@@ -137,4 +143,53 @@ class MLPActorCritic(nn.Module):
     def act(self, obs):
         return self.step(obs)[0]            
     
+class ReplayBuffer:
+    def __init__(self, buffer_size, observation_space, action_space, device, handle_timeout_termination=True):
+        self.obs_buf = deque(maxlen=buffer_size)
+        self.next_obs_buf = deque(maxlen=buffer_size)
+        self.action_buf = deque(maxlen=buffer_size)
+        self.reward_buf = deque(maxlen=buffer_size)
+        self.done_buf = deque(maxlen=buffer_size)
+        self.device = device
+        self.handle_timeout_termination = handle_timeout_termination    
 
+
+    def avail_memory(self):
+        return psutil.virtual_memory().available  # in bytes
+    
+    def add(self, obs, next_obs, action, reward, done, info):
+        if self.avail_memory() < obs.nbytes + next_obs.nbytes + action.nbytes + reward.nbytes + done.nbytes:
+            Warning("Not enough memory to add new experience to ReplayBuffer.")
+        else:
+            self.obs_buf.append(obs)
+            self.next_obs_buf.append(next_obs)
+            self.action_buf.append(action)
+            self.reward_buf.append(reward)
+            self.done_buf.append(done)
+
+    def sample(self, batch_size):
+        batch_indices = random.sample(range(len(self.obs_buf)), batch_size)
+        obs = torch.tensor(np.array([self.obs_buf[i] for i in batch_indices]), dtype=torch.float32).to(self.device).squeeze(1)
+        next_obs = torch.tensor(np.array([self.next_obs_buf[i] for i in batch_indices]), dtype=torch.float32).to(self.device).squeeze(1)
+        actions = torch.tensor(np.array([self.action_buf[i] for i in batch_indices]), dtype=torch.long).to(self.device)
+        rewards = torch.tensor(np.array([self.reward_buf[i] for i in batch_indices]), dtype=torch.float32).to(self.device)
+        dones = torch.tensor(np.array([self.done_buf[i] for i in batch_indices]), dtype=torch.float32).to(self.device)
+        return Batch(obs, next_obs, actions, rewards, dones)
+
+    def reset(self):
+        self.obs_buf.clear()
+        self.next_obs_buf.clear()
+        self.action_buf.clear()
+        self.reward_buf.clear()
+        self.done_buf.clear()
+
+    def __len__(self):
+        return len(self.obs_buf)
+    
+class Batch:
+    def __init__(self, observations, next_observations, actions, rewards, dones):
+        self.observations = observations
+        self.next_observations = next_observations
+        self.actions = actions
+        self.rewards = rewards
+        self.dones = dones
