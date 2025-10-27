@@ -1,4 +1,11 @@
 import os
+import sys
+
+# Add the project root to sys.path
+# This assumes the script is located within a subdirectory of the project root
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, project_root)
+
 import random
 import time
 from dataclasses import dataclass
@@ -22,7 +29,7 @@ class Args:
     wandb_project_name: str = "rl-foundations"
     wandb_entity: str = None
     capture_video: bool = False
-    save_model: bool = False
+    save_model: bool = True
 
     env_id: str = "CartPole-v1"
     total_timesteps: int = 500000
@@ -31,10 +38,10 @@ class Args:
     buffer_size: int = 10000
     gamma: float = 0.99
     tau: float = 0.005
-    batch_size: int = 128
+    batch_size: int = 256
     start_e: float = 1.0
     end_e: float = 0.05
-    exploration_fraction: float = 0.5
+    exploration_fraction: float = 0.8
     learning_starts: int = 10000
     train_freq: int = 10
     target_network_frequency: int = 500
@@ -80,7 +87,6 @@ if __name__ == "__main__":
         entity=args.wandb_entity,
         name=run_name,
         config=vars(args),
-        name=run_name,
         monitor_gym=True,
         save_code=True,
     )
@@ -125,10 +131,13 @@ if __name__ == "__main__":
 
         next_obs, rewards, terminations, truncations, infos= envs.step(actions)
 
+
         ### log episode return and length
         if "final_info" in infos:
+            print(f"Final info present at step {global_step}: {infos['final_info']}")
             for info in infos["final_info"]:
                 if info is not None:
+                    print(f"Logging episode: return={info['episode']['r']}, length={info['episode']['l']}")
                     wandb.log({
                         "episode_return": info["episode"]["r"],
                         "episode_length": info["episode"]["l"],
@@ -137,9 +146,6 @@ if __name__ == "__main__":
 
         
         real_next_obs = next_obs.copy()
-        for idx, trunc in enumerate(truncations):
-            if trunc:
-                real_next_obs[idx] = infos["final_info"][idx] 
 
         rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
 
@@ -149,7 +155,8 @@ if __name__ == "__main__":
             if global_step % args.train_freq == 0:
                 data = rb.sample(args.batch_size)
                 with torch.no_grad():
-                    target_max, _ = target_network(data.next_observations).max(dim=1)
+                    next_q_values = target_network(data.next_observations)
+                    target_max = next_q_values.max(dim=1)[0] # Explicitly get the values from the max operation
                     td_target = data.rewards.flatten() + args.gamma * (1 - data.dones.flatten()) * target_max
                 old_val = q_network(data.observations).gather(1, data.actions).squeeze()
                 loss = F.mse_loss(old_val, td_target)
@@ -160,13 +167,24 @@ if __name__ == "__main__":
                         "td_loss": loss.item(),
                         "q_value": old_val.mean().item(),
                     }, step=global_step)
+                    print(f"Step: {global_step}, TD Loss: {loss.item():.4f}, Q-Value: {old_val.mean().item():.4f}")
 
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
 
-            if global_step % args.target_network_frequency == 0:
-                for  target_net_param, q_net_param in zip(target_network.parameters(), q_network.parameters()):
+                for target_net_param, q_net_param in zip(target_network.parameters(), q_network.parameters()):
                     target_net_param.data.copy_(
                         args.tau * q_net_param.data + (1.0 - args.tau) * target_net_param.data
                     )
+
+    if args.save_model:    
+        model_path = f"checkpoints/{run_name}_dqn_{global_step}.pt"
+        os.makedirs(os.path.dirname(model_path), exist_ok=True)
+        torch.save(q_network.state_dict(), model_path)
+        print(f"Model saved to {model_path}")
+
+    rb.reset()
+    envs.close()
+    wandb.finish()
+    
