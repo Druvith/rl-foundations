@@ -4,6 +4,7 @@ import sys
 # Add the project root to sys.path
 # This assumes the script is located within a subdirectory of the project root
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+print(f"Adding project root to sys.path: {project_root}")
 sys.path.insert(0, project_root)
 
 import random

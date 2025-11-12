@@ -59,6 +59,7 @@ runs/
 tensorboard_logs/
 data/
 datasets/
+devnotes/
 
 # Environment variables
 .env
