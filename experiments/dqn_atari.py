@@ -4,6 +4,8 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 import sys
+
+from networkx import config
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 print(f"Adding project root to sys.path: {project_root}")
 sys.path.insert(0, project_root)
@@ -44,7 +46,7 @@ class Args:
     num_envs: int = 1
     buffer_size: int = 1000000
     gamma: float = 0.99
-    tau: float = 0.005
+    #tau: float = 0.005
     target_update_frequency: int = 10000
     batch_size: int = 32
     start_e: float = 1.0
@@ -52,6 +54,7 @@ class Args:
     exploration_fraction: float = 0.5
     learning_starts: int = 20000
     train_frequency: int = 4
+    load_weights_path: Optional[str] = "checkpoints/ALE/Breakout-v5__dqn_atari__1__1762918893/dqn_atari.pt"
 
 def make_env(env_id, seed, idx, capture_video, run_name):
     def thunk():
@@ -96,9 +99,25 @@ class QNetwork(nn.Module):
     def forward(self, x):
         return self.network(x / 255.0)  # Normalize pixel values
     
+
+    
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     slope = (end_e - start_e) / duration
     return max(end_e, slope * t + start_e) # floor at end_e. We dont way to end the exploration entirely.
+
+def huber_loss(pred: torch.Tensor, target: torch.Tensor, delta: float = 1.0, reduction: str = 'mean') -> torch.Tensor:
+    err = pred - target
+    abs_err = err.abs()
+    quadratic = 0.5 * err.pow(2)
+    linear = delta * (abs_err - 0.5 * delta)
+    loss = torch.where(abs_err <= delta, quadratic, linear)
+    if reduction == 'mean':
+        return loss.mean()
+    elif reduction == 'sum':
+        return loss.sum()
+    else:
+        return loss
+
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
@@ -131,8 +150,13 @@ if __name__ == "__main__":
         [make_env(args.env_id, args.seed + i, i, args.capture_video, run_name) for i in range(args.num_envs)]
     )
 
+    
     # create Q-network and target Q-network
     q_network = QNetwork(envs).to(device)
+    if args.load_weights_path is not None:
+        q_network.load_state_dict(torch.load(args.load_weights_path))
+        print(f"Loaded weights from {args.load_weights_path}")
+
     target_q_network = QNetwork(envs).to(device)
     target_q_network.load_state_dict(q_network.state_dict())
     optimizer = optim.Adam(q_network.parameters(), lr=args.learning_rate)
@@ -209,7 +233,7 @@ if __name__ == "__main__":
                 next_q_values = next_q_target.gather(1, next_actions).squeeze(1)
                 target_q_values = rewards_batch.flatten() + args.gamma * next_q_values * (1 - dones_batch.flatten())
             # Compute loss
-            loss = F.mse_loss(current_q_values, target_q_values)
+            loss = huber_loss(current_q_values, target_q_values)
 
             if global_step % 1000 == 0:
                 wandb.log({
