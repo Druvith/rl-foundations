@@ -158,14 +158,16 @@ class ReplayBuffer:
         return psutil.virtual_memory().available  # in bytes
     
     def add(self, obs, next_obs, action, reward, done, info):
-        if self.avail_memory() < obs.nbytes + next_obs.nbytes + action.nbytes + reward.nbytes + done.nbytes:
-            Warning("Not enough memory to add new experience to ReplayBuffer.")
-        else:
-            self.obs_buf.append(obs)
-            self.next_obs_buf.append(next_obs)
-            self.action_buf.append(action)
-            self.reward_buf.append(reward)
-            self.done_buf.append(done)
+        #obs_arr = np.array(obs)
+        #next_obs_arr = np.array(next_obs)
+        #if self.avail_memory() < obs.nbytes + next_obs.nbytes + action.nbytes + reward.nbytes + done.nbytes:
+         #   Warning("Not enough memory to add new experience to ReplayBuffer.")
+        #else:
+        self.obs_buf.append(obs)
+        self.next_obs_buf.append(next_obs)
+        self.action_buf.append(action)
+        self.reward_buf.append(reward)
+        self.done_buf.append(done)
 
     def sample(self, batch_size):
         batch_indices = random.sample(range(len(self.obs_buf)), batch_size)
